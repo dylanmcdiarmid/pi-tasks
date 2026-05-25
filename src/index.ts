@@ -295,6 +295,69 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  type TaskSnapshotReason = "compaction" | "tree";
+  let injectTaskSnapshotInContext = false;
+  let lastTaskSnapshotReason: TaskSnapshotReason = "compaction";
+
+  /** Build a compact task snapshot suitable for post-compaction context. */
+  function buildTaskSnapshot(reason: TaskSnapshotReason): { text: string; details: Record<string, unknown> } | undefined {
+    const tasks = store.list();
+    if (tasks.length === 0) return undefined;
+
+    const completed = tasks.filter(t => t.status === "completed").length;
+    const inProgress = tasks.filter(t => t.status === "in_progress").length;
+    const pending = tasks.filter(t => t.status === "pending").length;
+    const maxSnapshotTasks = 30;
+    const visibleTasks = tasks.slice(0, maxSnapshotTasks);
+
+    const lines = [
+      `<system-reminder>`,
+      `pi-tasks snapshot after ${reason}. The persisted task store is the canonical source of truth; call TaskList before choosing work and TaskGet for full task details.`,
+      `Current summary: ${tasks.length} tasks (${completed} completed, ${inProgress} in_progress, ${pending} pending).`,
+      ...visibleTasks.map(t => {
+        const owner = t.owner ? ` owner=${t.owner}` : "";
+        const blockedBy = t.blockedBy.length > 0 ? ` blockedBy=[${t.blockedBy.map(id => `#${id}`).join(",")}]` : "";
+        const blocks = t.blocks.length > 0 ? ` blocks=[${t.blocks.map(id => `#${id}`).join(",")}]` : "";
+        return `#${t.id} [${t.status}] ${t.subject}${owner}${blockedBy}${blocks}`;
+      }),
+    ];
+    if (tasks.length > maxSnapshotTasks) {
+      lines.push(`... ${tasks.length - maxSnapshotTasks} more tasks omitted; use TaskList for the full list.`);
+    }
+    lines.push(`</system-reminder>`);
+
+    return {
+      text: lines.join("\n"),
+      details: { reason, taskCount: tasks.length, completed, inProgress, pending, createdAt: Date.now() },
+    };
+  }
+
+  /**
+   * Append a compact task snapshot into the session context after history rewrites.
+   * The file-backed store remains canonical, but this keeps the agent aware that
+   * tasks exist after compaction/tree navigation without bloating the summary.
+   */
+  function appendTaskSnapshotToContext(ctx: ExtensionContext, reason: TaskSnapshotReason) {
+    const snapshot = buildTaskSnapshot(reason);
+    if (!snapshot) return;
+
+    try {
+      const sessionManager = ctx.sessionManager as unknown as {
+        appendCustomMessageEntry?: (customType: string, content: string, display: boolean, details?: unknown) => string;
+      };
+      if (typeof sessionManager.appendCustomMessageEntry !== "function") throw new Error("appendCustomMessageEntry unavailable");
+      sessionManager.appendCustomMessageEntry("pi_tasks_snapshot", snapshot.text, false, snapshot.details);
+      injectTaskSnapshotInContext = false;
+      debug("snapshot:appended", { reason, taskCount: snapshot.details.taskCount });
+    } catch (err) {
+      // Older pi versions expose sessionManager as read-only. Fall back to injecting
+      // the snapshot into outgoing LLM context instead of persisting a custom entry.
+      injectTaskSnapshotInContext = true;
+      lastTaskSnapshotReason = reason;
+      debug("snapshot:append_failed", err);
+    }
+  }
+
   // ── Turn tracking for system-reminder injection ──
   let currentTurn = 0;
   let lastTaskToolUseTurn = 0;
@@ -381,6 +444,29 @@ export default function (pi: ExtensionAPI) {
 
     upgradeStoreIfNeeded(ctx);
     showPersistedTasks(isResume);
+  });
+
+  // Re-seed compacted/branched context with the current task list snapshot.
+  pi.on("session_compact" as any, async (_event: any, ctx: ExtensionContext) => {
+    upgradeStoreIfNeeded(ctx);
+    appendTaskSnapshotToContext(ctx, "compaction");
+  });
+
+  pi.on("session_tree" as any, async (_event: any, ctx: ExtensionContext) => {
+    upgradeStoreIfNeeded(ctx);
+    appendTaskSnapshotToContext(ctx, "tree");
+  });
+
+  pi.on("context", async (event) => {
+    if (!injectTaskSnapshotInContext) return {};
+    const snapshot = buildTaskSnapshot(lastTaskSnapshotReason);
+    if (!snapshot) return {};
+    return {
+      messages: [
+        ...event.messages,
+        { role: "user" as const, content: snapshot.text, timestamp: Date.now() } as any,
+      ],
+    };
   });
 
   // Keep latestCtx fresh on every tool execution as well.
