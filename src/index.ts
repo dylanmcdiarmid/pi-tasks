@@ -378,6 +378,18 @@ export default function (pi: ExtensionAPI) {
     if (msg?.role === "assistant" && msg.usage) {
       widget.addTokenUsage(msg.usage.input ?? 0, msg.usage.output ?? 0);
     }
+    if (msg?.stopReason === "aborted") {
+      widget.clearActiveTasks();
+    }
+  });
+
+  // Escape aborts the active agent run. If a task was marked active via TaskUpdate
+  // earlier in the run, clear only the live spinner state; the task's persisted
+  // status remains in_progress so the user/agent can decide how to resume it.
+  pi.on("abort" as any, async (_event: any, ctx: ExtensionContext) => {
+    latestCtx = ctx;
+    widget.setUICtx(ctx.ui as UICtx);
+    widget.clearActiveTasks();
   });
 
   // ── System-reminder injection via tool_result event ──
@@ -496,7 +508,7 @@ Use this tool proactively in these scenarios:
 - Plan mode - When using plan mode, create a task list to track the work
 - User explicitly requests todo list - When the user directly asks you to use the todo list
 - User provides multiple tasks - When users provide a list of things to be done (numbered or comma-separated)
-- After receiving new instructions - Immediately capture user requirements as tasks
+- After receiving new instructions - Capture the actual requirements as tasks, but first read any referenced plan/spec file or issue so tasks reflect its concrete action items
 - When you start working on a task - Mark it as in_progress BEFORE beginning work
 - After completing a task - Mark it as completed and add any new follow-up tasks discovered during implementation
 
@@ -509,6 +521,10 @@ Skip using this tool when:
 - The task is purely conversational or informational
 
 NOTE that you should not use this tool if there is only one trivial task to do. In this case you are better off just doing the task directly.
+
+## Important: Plans and spec files
+
+If the user points you at a plan/spec/todo file (for example, "read POLISH-v2.md" or "there should be a plan to pick up"), read that file before creating tasks. Do not create a vague umbrella task like "Implement the plan" unless the plan genuinely contains only one action. Instead, decompose the plan into its specific requested changes and create one task per meaningful work item, preserving acceptance criteria from the plan in each task description.
 
 ## Task Fields
 
@@ -527,6 +543,7 @@ All tasks are created with status \`pending\`.
 - Include \`agentType\` (e.g., "general-purpose", "Explore") to mark tasks for subagent execution via TaskExecute`,
     promptGuidelines: [
       "When working on complex multi-step tasks, use TaskCreate to track progress and TaskUpdate to update status.",
+      "If the user references a plan/spec/todo file, read it before creating tasks and decompose its concrete action items instead of creating a generic umbrella task.",
       "Mark tasks as in_progress before starting work and completed when done.",
       "Use TaskList to check for available work after completing a task.",
     ],

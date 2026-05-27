@@ -503,6 +503,40 @@ describe("Standalone operation (no subagents extension)", () => {
     expect(result.content[0].text).toContain("in_progress");
   });
 
+  it("clears active task spinner when the agent run is aborted", async () => {
+    const widgets = new Map<string, any>();
+    const ctx = {
+      ...mockCtx(),
+      ui: {
+        setWidget: vi.fn((key: string, content: any, options: any) => widgets.set(key, { content, options })),
+        setStatus: vi.fn(),
+        notify: vi.fn(),
+      },
+    };
+    const render = () => {
+      const entry = widgets.get("tasks");
+      const rendered = entry.content({ terminal: { columns: 200 }, requestRender() {} }, {
+        fg: (_color: string, text: string) => text,
+        bold: (text: string) => text,
+        strikethrough: (text: string) => text,
+      });
+      return rendered.render() as string[];
+    };
+
+    await mock.fireLifecycle("before_agent_start", { type: "before_agent_start" }, ctx);
+    await mock.executeTool("TaskCreate", { subject: "Update me", description: "desc", activeForm: "Doing work" }, ctx);
+    await mock.executeTool("TaskUpdate", { taskId: "1", status: "in_progress" }, ctx);
+    expect(render()[1]).toContain("Doing work…");
+
+    await mock.fireLifecycle("abort", { type: "abort", clearedSteer: [], clearedFollowUp: [] }, ctx);
+
+    const lines = render();
+    expect(lines[1]).toContain("◼");
+    expect(lines[1]).not.toContain("Doing work…");
+    const result = await mock.executeTool("TaskGet", { taskId: "1" }, ctx);
+    expect(result.content[0].text).toContain("in_progress");
+  });
+
   it("TaskExecute gracefully refuses without subagents", async () => {
     await mock.executeTool("TaskCreate", {
       subject: "Agent task",

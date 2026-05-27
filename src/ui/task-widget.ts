@@ -97,6 +97,16 @@ export class TaskWidget {
     this.update();
   }
 
+  /** Remove all active task spinners without changing persisted task status. */
+  clearActiveTasks() {
+    if (this.activeTaskIds.size === 0) return;
+    for (const id of this.activeTaskIds) {
+      this.metrics.delete(id);
+    }
+    this.activeTaskIds.clear();
+    this.update();
+  }
+
   /** Record token usage for the currently active task(s). */
   addTokenUsage(inputTokens: number, outputTokens: number) {
     // Distribute to all currently active tasks

@@ -201,6 +201,19 @@ describe("TaskWidget", () => {
     expect(lines[1]).not.toContain("Doing work…");
   });
 
+  it("clears all active task spinners without changing task status", () => {
+    store.create("Task", "Desc", "Doing work");
+    store.update("1", { status: "in_progress" });
+    widget.setActiveTask("1", true);
+
+    widget.clearActiveTasks();
+
+    const lines = renderWidget(ui.state);
+    expect(store.get("1")?.status).toBe("in_progress");
+    expect(lines[1]).toContain("◼");
+    expect(lines[1]).not.toContain("Doing work…");
+  });
+
   it("prunes stale active IDs on update", () => {
     store.create("Task", "Desc");
     store.update("1", { status: "in_progress" });
