@@ -93,6 +93,29 @@ describe("TaskStore (in-memory)", () => {
     expect(t3.id).toBe("3"); // Not "1" — counter continues
   });
 
+  it("starts a fresh list when creating after all tasks are completed", () => {
+    store.create("Task 1", "Desc");
+    store.create("Task 2", "Desc");
+    store.update("1", { status: "completed" });
+    store.update("2", { status: "completed" });
+
+    const next = store.create("New plan task", "Desc");
+
+    expect(next.id).toBe("1");
+    expect(store.list().map(t => t.subject)).toEqual(["New plan task"]);
+  });
+
+  it("continues the current list when creating while any task remains open", () => {
+    store.create("Done", "Desc");
+    store.create("Pending", "Desc");
+    store.update("1", { status: "completed" });
+
+    const next = store.create("Follow-up", "Desc");
+
+    expect(next.id).toBe("3");
+    expect(store.list().map(t => t.id)).toEqual(["1", "2", "3"]);
+  });
+
   it("merges metadata with null key deletion", () => {
     store.create("Test", "Desc", undefined, { a: 1, b: 2, c: 3 });
     store.update("1", { metadata: { b: null, d: 4 } });
@@ -287,6 +310,15 @@ describe("TaskStore (in-memory)", () => {
   it("clearCompleted returns 0 when no completed tasks", () => {
     store.create("Pending", "Desc");
     expect(store.clearCompleted()).toBe(0);
+  });
+
+  it("resets IDs after clearCompleted removes the entire closed list", () => {
+    store.create("Done", "Desc");
+    store.update("1", { status: "completed" });
+    expect(store.clearCompleted()).toBe(1);
+
+    const next = store.create("New list", "Desc");
+    expect(next.id).toBe("1");
   });
 
   it("list sorts pending → in_progress → completed with all three present", () => {

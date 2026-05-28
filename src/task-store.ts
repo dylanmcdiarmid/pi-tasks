@@ -110,6 +110,10 @@ export class TaskStore {
 
   create(subject: string, description: string, activeForm?: string, metadata?: Record<string, any>): Task {
     return this.withLock(() => {
+      if (this.tasks.size > 0 && Array.from(this.tasks.values()).every(task => task.status === "completed")) {
+        this.tasks.clear();
+        this.nextId = 1;
+      }
       const now = Date.now();
       const task: Task = {
         id: String(this.nextId++),
@@ -270,6 +274,7 @@ export class TaskStore {
     return this.withLock(() => {
       const count = this.tasks.size;
       this.tasks.clear();
+      this.nextId = 1;
       return count;
     });
   }
@@ -297,6 +302,9 @@ export class TaskStore {
         for (const t of this.tasks.values()) {
           t.blocks = t.blocks.filter(bid => validIds.has(bid));
           t.blockedBy = t.blockedBy.filter(bid => validIds.has(bid));
+        }
+        if (this.tasks.size === 0) {
+          this.nextId = 1;
         }
       }
       return count;
